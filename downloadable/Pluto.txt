@@ -1,0 +1,105 @@
+import bpy
+import os
+import math
+
+# ==== SET TEXTURE PATH ====
+moon_texture_path = r"C:\Users\Francis Balbin\Downloads\Francis\Solar System Blender\Planets Resources\Pluto.jpg"  # <== Change this
+
+# ==== CLEAN SCENE ====
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete(use_global=False)
+bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
+# ==== CREATE MOON SPHERE ====
+bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, radius=1, location=(0, 0, 0))
+planet = bpy.context.active_object
+planet.name = "Pluto"
+bpy.ops.object.shade_smooth()
+
+# ==== CREATE MATERIAL ====
+material = bpy.data.materials.new(name="MoonMaterial")
+material.use_nodes = True
+nodes = material.node_tree.nodes
+links = material.node_tree.links
+
+# Clear default nodes
+for node in nodes:
+    nodes.remove(node)
+
+# Create nodes
+tex_image = nodes.new(type='ShaderNodeTexImage')
+tex_image.image = bpy.data.images.load(moon_texture_path)
+tex_image.location = (-500, 0)
+
+contrast = nodes.new(type='ShaderNodeBrightContrast')
+contrast.location = (-500, 0)
+contrast.inputs['Contrast'].default_value = 2.0   # tweak 1.0–2.0
+contrast.inputs['Bright'].default_value = -3.0   # slight darkening
+
+bsdf = nodes.new(type='ShaderNodeBsdfPrincipled')
+bsdf.location = (-200, 0)
+
+# Optional: make Moon less shiny
+bsdf.inputs['Roughness'].default_value = 1
+#bsdf.inputs['Specular'].default_value = 0.0
+
+output = nodes.new(type='ShaderNodeOutputMaterial')
+output.location = (200, 0)
+
+# Link nodes
+links.new(tex_image.outputs['Color'], bsdf.inputs['Base Color'])
+links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+
+# Assign material to planet
+planet.data.materials.append(material)
+
+# ==== ADD SUNLIGHT ====
+bpy.ops.object.light_add(type='SUN', location=(5, -5, 5))
+sun = bpy.context.active_object
+sun.data.energy = 8
+sun.rotation_euler = (0.9, 0, 0.8)
+
+# ==== ADD CAMERA ====
+bpy.ops.object.camera_add(location=(0, -6, 0), rotation=(1.5708, 0, 0))
+camera = bpy.context.active_object
+bpy.context.scene.camera = camera
+
+camera.data.lens = 35
+
+# ==== RENDER SETTINGS ====
+scene = bpy.context.scene
+scene.render.engine = 'CYCLES'
+scene.cycles.device = 'GPU'  # or 'CPU'
+scene.render.film_transparent = False
+
+# ==== RENDER OPTIMIZATION ====
+scene.render.use_persistent_data = True
+
+scene.cycles.samples = 128
+scene.cycles.preview_samples = 32
+scene.cycles.use_adaptive_sampling = True
+
+scene.cycles.use_denoising = True
+scene.cycles.denoiser = 'OPENIMAGEDENOISE'
+
+# ==== ANIMATION (5 seconds, 24 FPS) ====
+scene.frame_start = 1
+scene.frame_end = 120  # 5 seconds * 24 FPS
+scene.render.fps = 24
+
+planet.rotation_mode = 'XYZ'
+
+# Start rotation
+planet.rotation_euler[2] = 0
+planet.keyframe_insert(data_path="rotation_euler", frame=1)
+
+# End rotation (360 degrees)
+planet.rotation_euler[2] = math.radians(360)
+planet.keyframe_insert(data_path="rotation_euler", frame=120)
+
+# Make rotation linear (constant speed)
+for fcurve in planet.animation_data.action.fcurves: 
+    for keyframe in fcurve.keyframe_points:
+        keyframe.interpolation = 'LINEAR'
+
+print("🪐 Pluto created with 5-second rotation and optimized Cycles render.")
