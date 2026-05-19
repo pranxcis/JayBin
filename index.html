@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>JayBin Home</title>
+
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+    rel="stylesheet">
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+
+  <link rel="stylesheet" href="../includes/style.css">
+  <script src="../includes/include.js" defer></script>
+</head>
+
+<body>
+
+  <!-- Header -->
+  <div id="header"></div>
+
+  <main>
+
+    <!-- HERO -->
+    <section class="hero">
+      <div class="hero-overlay"></div>
+        <div class="hero-content container">
+          <p class="hero-subtext">
+            Explore the
+          </p>
+          <h1 class="hero-title">
+            Beauty of Frames
+          </h1>
+          <p class="hero-caption">
+            Discover the Wonders of Multimedia Authoring by JayBin
+          </p>
+        </div>
+    </section>
+
+    <!-- FEATURED WORKS -->
+    <section class="featured-section py-12 bg-black">
+      <div class="container">
+        <div class="text-center mb-5">
+          <p class="featured-label mb-2">
+            Featured Works
+          </p>
+          <h2 class="featured-heading text-white">
+            Recent Projects
+          </h2>
+        </div>
+
+        <div class="row g-4 justify-content-center">
+          <!-- CARD 1 -->
+          <div class="col-12 col-md-5">
+            <a
+              href="rotoscope.html"
+              class="featured-card d-block text-decoration-none">
+              <div class="featured-card-img">
+                <img
+                  src="../resources/Rotoscope.png"
+                  alt="Rotoscope project preview"
+                  loading="lazy">
+              </div>
+              <div class="featured-card-body text-center">
+                <h3 class="featured-card-title">
+                  Rotoscope
+                </h3>
+                <p class="featured-card-tags">
+                  Frames &middot; Animation &middot; Tracing
+                </p>
+              </div>
+            </a>
+          </div>
+
+          <!-- CARD 2 -->
+          <div class="col-12 col-md-5">
+            <a
+              href="solarsystem.html"
+              class="featured-card d-block text-decoration-none">
+              <div class="featured-card-img">
+                <img
+                  src="../resources/Solar System.png"
+                  alt="Solar System project preview"
+                  loading="lazy">
+              </div>
+              <div class="featured-card-body text-center">
+                <h3 class="featured-card-title">
+                  Solar System
+                </h3>
+                <p class="featured-card-tags">
+                  Render &middot; 3D Model &middot; Blending
+                </p>
+              </div>
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MINI ABOUT -->
+    <section class="mini-about-section py-5 bg-black">
+      <div class="container">
+        <div class="row align-items-center g-5 justify-content-center">
+
+          <!-- PROFILE IMAGE -->
+          <div class="col-12 col-md-4 text-center">
+            <div class="profile-img-wrap">
+              <img
+                src="../resources/Profile.jpg"
+                alt="Portrait of JayBin"
+                class="profile-img"
+                loading="lazy">
+            </div>
+          </div>
+
+          <!-- ABOUT TEXT -->
+          <div class="col-12 col-md-6 text-white">
+            <p class="about-hey">
+              Hey!
+            </p>
+            <h2 class="about-name">
+              It's JayBin
+            </h2>
+            <p class="about-bio">
+              I am more than glad to share my journey and projects with you through this portfolio.
+              Recently, I have been focused on honing my skills in animation,
+              framing/tracing, and rendering.
+            </p>
+            <a href="about.html" class="about-link">
+              More About Me
+            </a>
+
+            <!-- SOCIALS -->
+            <div class="d-flex gap-3 mt-4">
+              <a
+                href="https://www.facebook.com/francis.balbin.333936"
+                class="icon-btn-dark"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Facebook">
+                <i class="bi bi-facebook"></i>
+              </a>
+              <a
+                href="https://www.instagram.com/jufranxz/"
+                class="icon-btn-dark"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Instagram">
+                <i class="bi bi-instagram"></i>
+              </a>
+              <a
+                href="https://github.com/pranxcis"
+                class="icon-btn-dark"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="GitHub">
+                <i class="bi bi-github"></i>
+              </a>
+              <a
+                href="https://www.youtube.com/@Frankcay"
+                class="icon-btn-dark"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="YouTube">
+                <i class="bi bi-youtube"></i>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ALL WORKS -->
+    <section class="all-works-section py-12">
+      <div class="container">
+        <div class="text-center mb-5">
+          <p class="all-works-label mb-2">
+            Portfolio Archive
+          </p>
+          <h2 class="all-works-title">
+            Work Collection
+          </h2>
+        </div>
+
+        <div class="project-wrapper">
+          <!-- LEFT BUTTON -->
+          <button
+            class="scroll-btn scroll-btn--left"
+            type="button"
+            onclick="changeProject(-1)"
+            aria-label="Previous project">
+            <i class="bi bi-chevron-left"></i>
+          </button>
+
+          <!-- CAROUSEL -->
+          <div class="project-carousel">
+            <div class="project-track" id="projectTrack">
+              <!-- PROJECT -->
+              <a href="solarsystem.html" class="project-slide">
+                <div class="project-card">
+                  <img
+                    src="../resources/Solar System.png"
+                    alt="Solar System project preview"
+                    loading="lazy">
+                  <div class="project-card-body">
+                    <h3>
+                      Solar System
+                    </h3>
+                    <p>
+                      Render &middot; 3D Model &middot; Blending
+                    </p>
+                  </div>
+                </div>
+              </a>
+
+              <!-- PROJECT -->
+              <a href="rotoscope.html" class="project-slide">
+                <div class="project-card">
+                  <img
+                    src="../resources/Rotoscope.png"
+                    alt="Rotoscope project preview"
+                    loading="lazy">
+                  <div class="project-card-body">
+                    <h3>
+                      Rotoscope
+                    </h3>
+                    <p>
+                      Frames &middot; Animation &middot; Tracing
+                    </p>
+                  </div>
+                </div>
+              </a>
+
+              <!-- PROJECT CS -->
+              <a href="operatingsystem.html" class="project-slide">
+                <div class="project-card">
+                  <img
+                    src="../resources/Placeholder.png"
+                    alt="Operating System project preview"
+                    loading="lazy">
+                  <div class="project-card-body">
+                    <h3>
+                      Operating System
+                    </h3>
+                    <p>
+                      Concepts &middot; Systems &middot; Interface
+                    </p>
+                  </div>
+                </div>
+              </a>
+            </div>
+          </div>
+
+          <!-- RIGHT BUTTON -->
+          <button
+            class="scroll-btn scroll-btn--right"
+            type="button"
+            onclick="changeProject(1)"
+            aria-label="Next project">
+            <i class="bi bi-chevron-right"></i>
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <div id="footer"></div>
+
+  <script src="../includes/carousel.js"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js">
+  </script>
+
+</body>
+</html>
