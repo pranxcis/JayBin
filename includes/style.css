@@ -1846,6 +1846,16 @@ h6,
   display: block;
 }
 
+.rotoscope-backup-video {
+  width: 50%;
+  
+  aspect-ratio: 16 / 9;
+
+  border-radius: 24px;
+
+  display: block;
+}
+
 /* =============================================
    REFERENCE CARD
 ============================================= */
