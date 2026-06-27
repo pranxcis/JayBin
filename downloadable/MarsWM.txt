@@ -1,0 +1,230 @@
+import bpy
+import math
+import os
+
+# ============================================================
+# MarsWM.py — Mars with 2 Moons
+# Blender 5.1.2 | Cycles GPU | 120 frames @ 24 FPS
+# ============================================================
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+PLANET_NAME  = "Mars"
+TEXTURE_PATH = r"C:\Users\Francis Balbin\Downloads\Francis\Solar System Blender\Planets Resources\Mars.jpg"  # 🔁 Replace with your actual file path
+
+SUN_ENERGY        = 8
+SUN_ROTATION      = (0.9, 0.0, 0.8)
+SUN_ANGLE         = 0.02
+
+CAMERA_LOCATION   = (0.0, -6.0, 0.0)
+CAMERA_ROTATION   = (math.radians(90), 0.0, 0.0)
+CAMERA_LENS       = 35
+
+FRAME_START       = 1
+FRAME_END         = 120
+FPS               = 24
+
+PLANET_ROTATION_Z = math.radians(360)   # 1 full spin over 120 frames
+
+SAMPLES           = 64
+PREVIEW_SAMPLES   = 32
+
+# Moon definitions — (radius, speed_multiplier, inclination_deg, tilt_deg)
+# Phobos: closer, faster; Deimos: farther, slower
+MOON_CONFIGS = [
+    {"name": "Phobos", "radius": 1.55, "speed": 3.0,  "incl": 1.0,  "tilt": 2.0,  "scale": 0.06},
+    {"name": "Deimos", "radius": 2.20, "speed": 1.4,  "incl": 2.5,  "tilt": 1.5,  "scale": 0.04},
+]
+
+
+# ============================================================
+# GLOBAL ANIMATION SETTINGS
+# ============================================================
+
+# Force Blender to create LINEAR keyframes by default
+bpy.context.preferences.edit.keyframe_new_interpolation_type = 'LINEAR'
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def make_rocky_moon_material(name):
+    """Return a neutral gray rocky Principled BSDF material (no textures)."""
+    mat = bpy.data.materials.new(name=name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (-200, 0)
+    bsdf.inputs["Base Color"].default_value   = (0.38, 0.35, 0.32, 1.0)
+    bsdf.inputs["Roughness"].default_value    = 0.85
+    bsdf.inputs["Specular IOR Level"].default_value = 0.05
+
+    out = nodes.new("ShaderNodeOutputMaterial")
+    out.location = (100, 0)
+    links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return mat
+
+
+# ============================================================
+# SCENE CLEANUP
+# ============================================================
+
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete(use_global=False)
+bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
+
+# ============================================================
+# PLANET — MARS
+# ============================================================
+
+bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, radius=1.0, location=(0, 0, 0))
+planet = bpy.context.active_object
+planet.name = PLANET_NAME
+bpy.ops.object.shade_smooth()
+
+# Material
+mat = bpy.data.materials.new(name=f"{PLANET_NAME}Material")
+mat.use_nodes = True
+nodes = mat.node_tree.nodes
+links = mat.node_tree.links
+nodes.clear()
+
+tex_node  = nodes.new("ShaderNodeTexImage")
+tex_node.image = bpy.data.images.load(TEXTURE_PATH)
+tex_node.location = (-500, 0)
+
+bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+bsdf.location = (-200, 0)
+
+out = nodes.new("ShaderNodeOutputMaterial")
+out.location = (200, 0)
+
+links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+links.new(bsdf.outputs["BSDF"],     out.inputs["Surface"])
+
+planet.data.materials.append(mat)
+
+
+# ============================================================
+# MOON GENERATION
+# ============================================================
+
+moon_material = make_rocky_moon_material("MoonRockyMat")
+
+for cfg in MOON_CONFIGS:
+    # Orbit empty (pivot point at planet center)
+    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
+    orbit_empty = bpy.context.active_object
+    orbit_empty.name = f"{cfg['name']}_Orbit"
+    orbit_empty.rotation_euler[0] = math.radians(cfg["incl"])   # orbital inclination
+
+    # Moon sphere, parented to orbit empty
+    bpy.ops.mesh.primitive_uv_sphere_add(
+        segments=32, ring_count=16,
+        radius=cfg["scale"],
+        location=(cfg["radius"], 0.0, 0.0)
+    )
+    moon = bpy.context.active_object
+    moon.name = cfg["name"]
+    moon.rotation_euler[0] = math.radians(cfg["tilt"])           # axial tilt
+    bpy.ops.object.shade_smooth()
+
+    moon.data.materials.append(moon_material)
+
+    # Parent moon to its orbit empty
+    moon.parent = orbit_empty
+
+    # Animate orbit: rotate the empty around Z over the full timeline
+    total_angle = math.radians(360) * cfg["speed"]
+
+    orbit_empty.rotation_euler[2] = 0.0
+    orbit_empty.keyframe_insert(data_path="rotation_euler", frame=FRAME_START)
+    orbit_empty.rotation_euler[2] = total_angle
+    orbit_empty.keyframe_insert(data_path="rotation_euler", frame=FRAME_END)
+
+    # Animate moon's own axial spin
+    moon.rotation_euler[2] = 0.0
+    moon.keyframe_insert(data_path="rotation_euler", frame=FRAME_START)
+    moon.rotation_euler[2] = math.radians(360)
+    moon.keyframe_insert(data_path="rotation_euler", frame=FRAME_END)
+
+
+# ============================================================
+# LIGHTING
+# ============================================================
+
+bpy.ops.object.light_add(type="SUN", location=(5, -5, 5))
+sun = bpy.context.active_object
+sun.name = "Sun"
+sun.data.energy       = SUN_ENERGY
+sun.rotation_euler    = SUN_ROTATION
+sun.data.angle        = SUN_ANGLE
+
+
+# ============================================================
+# CAMERA
+# ============================================================
+
+bpy.ops.object.camera_add(location=CAMERA_LOCATION, rotation=CAMERA_ROTATION)
+camera = bpy.context.active_object
+camera.name           = "Camera"
+camera.data.lens      = CAMERA_LENS
+bpy.context.scene.camera = camera
+
+
+# ============================================================
+# ANIMATION — PLANET ROTATION
+# ============================================================
+
+scene = bpy.context.scene
+scene.frame_start  = FRAME_START
+scene.frame_end    = FRAME_END
+scene.render.fps   = FPS
+
+planet.rotation_euler[2] = 0.0
+planet.keyframe_insert(data_path="rotation_euler", frame=FRAME_START)
+planet.rotation_euler[2] = PLANET_ROTATION_Z
+planet.keyframe_insert(data_path="rotation_euler", frame=FRAME_END)
+
+
+# ============================================================
+# RENDER CONFIGURATION
+# ============================================================
+
+scene.render.engine              = "CYCLES"
+scene.cycles.device              = "GPU"
+scene.render.film_transparent    = False
+
+# World: pure black — no HDRI, no environment
+scene.world.use_nodes = True
+scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.0
+
+# Optimized samples
+scene.cycles.samples             = SAMPLES
+scene.cycles.preview_samples     = PREVIEW_SAMPLES
+scene.cycles.use_adaptive_sampling = True
+
+# Reduce bounces — black bg means indirect light is negligible
+scene.cycles.max_bounces              = 4
+scene.cycles.diffuse_bounces          = 2
+scene.cycles.glossy_bounces           = 2
+scene.cycles.transmission_bounces     = 2
+scene.cycles.volume_bounces           = 0
+scene.cycles.transparent_max_bounces  = 4
+
+# Denoising
+scene.cycles.use_denoising  = True
+scene.cycles.denoiser       = "OPENIMAGEDENOISE"
+
+# Persistent data across frames
+scene.render.use_persistent_data = True
+
+print("✅ MarsWM.py — Mars + 2 moons created successfully.")

@@ -1,0 +1,820 @@
+import bpy, math, os
+
+# ── USER SETTINGS ─────────────────────────────────────────────────────────────
+TEXTURE_DIR = r"C:\Users\Francis Balbin\Downloads\Francis\Solar System Blender\Planets Resources"
+
+# ── CONSTANTS ─────────────────────────────────────────────────────────────────
+FPS = 24
+
+SCENE_DURATION = 20  # seconds
+TOTAL_FRAMES = FPS * SCENE_DURATION
+
+# ── SCENE SETUP ───────────────────────────────────────────────────────────────
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete()
+bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
+sc = bpy.context.scene
+sc.frame_start, sc.frame_end, sc.render.fps = 120, TOTAL_FRAMES, FPS
+
+sc.render.engine                     = 'CYCLES'
+sc.cycles.device                     = 'GPU'
+sc.cycles.samples                    = 64
+sc.cycles.preview_samples            = 32
+sc.cycles.use_adaptive_sampling      = True
+sc.cycles.use_denoising              = True
+sc.cycles.denoiser                   = 'OPENIMAGEDENOISE'
+sc.render.use_persistent_data        = True
+sc.render.image_settings.file_format = 'PNG'
+sc.render.resolution_x               = 1920
+sc.render.resolution_y               = 1080
+sc.render.use_motion_blur            = False
+
+sc.view_settings.view_transform = 'AgX'
+sc.view_settings.look = 'None'
+sc.view_settings.exposure = -0.5
+
+world = bpy.data.worlds.new("Space")
+world.use_nodes = True
+bg = world.node_tree.nodes["Background"]
+bg.inputs["Color"].default_value = (0, 0, 0, 1)
+bg.inputs["Strength"].default_value = 0
+sc.world = world
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def make_material(name, base_color, roughness=0.6, metallic=0.0, emission=None, emission_strength=0.0):
+    """Create a simple PBR material with optional emission."""
+    mat = bpy.data.materials.new(name=name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    output = nodes.new('ShaderNodeOutputMaterial')
+    bsdf = nodes.new('ShaderNodeBsdfPrincipled')
+    bsdf.inputs['Base Color'].default_value = (*base_color, 1.0)
+    bsdf.inputs['Roughness'].default_value = roughness
+    bsdf.inputs['Metallic'].default_value = metallic
+
+    if emission and emission_strength > 0:
+        bsdf.inputs['Emission Color'].default_value = (*emission, 1.0)
+        bsdf.inputs['Emission Strength'].default_value = emission_strength
+
+    links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+    return mat
+
+
+def assign_material(obj, mat):
+    """Assign a material to an object."""
+    if obj.data.materials:
+        obj.data.materials[0] = mat
+    else:
+        obj.data.materials.append(mat)
+
+
+def add_cube(name, location, scale, parent=None):
+    bpy.ops.mesh.primitive_cube_add(location=location)
+    obj = bpy.context.active_object
+    obj.name = name
+    obj.scale = scale
+    if parent:
+        obj.parent = parent
+    return obj
+
+
+def add_cylinder(name, location, radius, depth, rotation=(0, 0, 0), parent=None):
+    bpy.ops.mesh.primitive_cylinder_add(
+        radius=radius, depth=depth, location=location,
+        rotation=rotation, vertices=32
+    )
+    obj = bpy.context.active_object
+    obj.name = name
+    if parent:
+        obj.parent = parent
+    return obj
+
+
+def set_smooth(obj):
+    """Enable smooth shading on a mesh object."""
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.shade_smooth()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MATERIALS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+mat_concrete    = make_material("MAT_Concrete",    (0.55, 0.52, 0.48), roughness=0.92)
+mat_ground      = make_material("MAT_Ground",      (0.48, 0.44, 0.36), roughness=0.95)
+mat_steel       = make_material("MAT_Steel",       (0.72, 0.72, 0.70), roughness=0.45, metallic=0.85)
+mat_dark_steel  = make_material("MAT_DarkSteel",   (0.28, 0.28, 0.26), roughness=0.50, metallic=0.80)
+mat_tower       = make_material("MAT_Tower",       (0.60, 0.58, 0.52), roughness=0.70, metallic=0.40)
+mat_white       = make_material("MAT_White",       (0.90, 0.90, 0.88), roughness=0.55)
+mat_orange_tank = make_material("MAT_OrangeTank",  (0.72, 0.38, 0.10), roughness=0.80)
+mat_srb         = make_material("MAT_SRB",         (0.82, 0.82, 0.80), roughness=0.60)
+mat_black_tile  = make_material("MAT_BlackTile",   (0.06, 0.06, 0.06), roughness=0.85)
+mat_nozzle      = make_material("MAT_Nozzle",      (0.18, 0.18, 0.17), roughness=0.35, metallic=0.90)
+mat_red_stripe  = make_material("MAT_RedStripe",   (0.75, 0.08, 0.05), roughness=0.65)
+mat_pad_metal   = make_material("MAT_PadMetal",    (0.50, 0.48, 0.44), roughness=0.60, metallic=0.50)
+mat_sky_haze    = make_material("MAT_SkyHaze",     (0.85, 0.55, 0.25), roughness=1.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WORLD — EARLY MORNING SKY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+world.use_nodes = True
+wnt = world.node_tree
+wnt.nodes.clear()
+
+w_output  = wnt.nodes.new('ShaderNodeOutputWorld')
+w_bg      = wnt.nodes.new('ShaderNodeBackground')
+w_sky     = wnt.nodes.new('ShaderNodeTexSky')
+w_mapping = wnt.nodes.new('ShaderNodeMapping')
+w_coord   = wnt.nodes.new('ShaderNodeTexCoord')
+
+w_sky.sky_type    = 'PREETHAM'
+w_sky.sun_elevation = math.radians(8.0)   # low morning sun angle
+w_sky.sun_rotation  = math.radians(60.0)  # direction — slightly off-axis left
+w_sky.altitude      = 0.0
+w_sky.ozone_density = 1.0
+
+wnt.links.new(w_coord.outputs['Generated'],    w_mapping.inputs['Vector'])
+wnt.links.new(w_mapping.outputs['Vector'],     w_sky.inputs['Vector'])
+wnt.links.new(w_sky.outputs['Color'],          w_bg.inputs['Color'])
+w_bg.inputs['Strength'].default_value = 1.8
+wnt.links.new(w_bg.outputs['Background'],      w_output.inputs['Surface'])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GROUND PLANE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+bpy.ops.mesh.primitive_plane_add(size=1, location=(0, 0, 0))
+ground = bpy.context.active_object
+ground.name = "Ground_Plane"
+ground.scale = (1500, 1500, 1)
+bpy.ops.object.transform_apply(scale=True)
+assign_material(ground, mat_ground)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONCRETE LAUNCH PAD
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Main pad slab
+pad_slab = add_cube("LaunchPad_Slab", (0, 0, 0.75), (14, 14, 0.75))
+assign_material(pad_slab, mat_concrete)
+
+# Raised center pedestal
+pad_pedestal = add_cube("LaunchPad_Pedestal", (0, 0, 1.9), (6, 6, 0.4))
+assign_material(pad_pedestal, mat_concrete)
+
+# Flame trench cut (visual box representing the trench channel)
+trench = add_cube("FlameTrench", (0, 0, 0.4), (2.2, 9, 0.45))
+assign_material(trench, mat_dark_steel)
+
+# Flame deflector wedge
+bpy.ops.mesh.primitive_cone_add(vertices=4, radius1=3.0, radius2=0.2, depth=2.0,
+                                  location=(0, -5.5, 1.4), rotation=(math.radians(20), 0, 0))
+deflector = bpy.context.active_object
+deflector.name = "FlameDeflector"
+assign_material(deflector, mat_concrete)
+
+# Pad support pillars (4 corners)
+for px, py in [(5, 5), (-5, 5), (5, -5), (-5, -5)]:
+    pillar = add_cube(f"PadPillar_{px}_{py}", (px, py, 0.5), (0.6, 0.6, 0.5))
+    assign_material(pillar, mat_concrete)
+
+# Water deluge pipes (horizontal runs on ground)
+for i, (lx, ly, sx, sy) in enumerate([
+    (8, 0, 0.15, 4), (-8, 0, 0.15, 4),
+    (0, 8, 4, 0.15), (0, -8, 4, 0.15)
+]):
+    pipe = add_cube(f"DelugePipe_{i}", (lx, ly, 0.12), (sx, sy, 0.12))
+    assign_material(pipe, mat_dark_steel)
+
+# Deluge nozzle heads
+for angle_deg in range(0, 360, 45):
+    angle_rad = math.radians(angle_deg)
+    nx = math.cos(angle_rad) * 7
+    ny = math.sin(angle_rad) * 7
+    nozzle_head = add_cylinder(f"DelugeNozzle_{angle_deg}", (nx, ny, 0.35), 0.12, 0.5)
+    assign_material(nozzle_head, mat_dark_steel)
+
+# Ground access road strips
+for i, oy in enumerate([20, 22]):
+    road = add_cube(f"AccessRoad_{i}", (-60, oy, 0.02), (80, 0.8, 0.02))
+    assign_material(road, mat_dark_steel)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LAUNCH TOWER (Fixed Service Structure - FSS)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+TOWER_X  = 12.0   # position to the right of the rocket
+TOWER_Y  = 0.0
+TOWER_H  = 80.0   # full height in meters (scaled units)
+TOWER_W  = 3.5
+
+# Tower base
+tower_base = add_cube("Tower_Base", (TOWER_X, TOWER_Y, 1.5), (TOWER_W, TOWER_W, 1.5))
+assign_material(tower_base, mat_tower)
+
+# Tower main column
+tower_col = add_cube("Tower_Column", (TOWER_X, TOWER_Y, TOWER_H / 2 + 3), (TOWER_W, TOWER_W, TOWER_H / 2))
+assign_material(tower_col, mat_tower)
+
+# Tower cross-members (horizontal platforms at intervals)
+platform_heights = [10, 18, 26, 34, 42, 50, 58, 66, 74]
+for i, ph in enumerate(platform_heights):
+    plat = add_cube(f"Tower_Platform_{i}", (TOWER_X, TOWER_Y, ph), (TOWER_W + 1.5, TOWER_W + 1.5, 0.3))
+    assign_material(plat, mat_steel)
+
+    # Handrail stub on platform
+    rail = add_cube(f"Tower_Railing_{i}", (TOWER_X - TOWER_W, TOWER_Y, ph + 0.6), (0.1, TOWER_W + 1.5, 0.55))
+    assign_material(rail, mat_steel)
+
+# Diagonal lattice braces on tower (X-pattern pairs every 8 units)
+for lvl in range(len(platform_heights) - 1):
+    z_bot = platform_heights[lvl]
+    z_top = platform_heights[lvl + 1]
+    for axis in ['x', 'y']:
+        for flip in [1, -1]:
+            brace_h = (z_top - z_bot)
+            brace_loc_z = (z_bot + z_top) / 2
+            if axis == 'x':
+                brace = add_cube(f"Brace_{lvl}_{axis}_{flip}",
+                                 (TOWER_X, TOWER_Y + flip * 0.5, brace_loc_z),
+                                 (0.12, 0.12, brace_h / 2))
+            else:
+                brace = add_cube(f"Brace_{lvl}_{axis}_{flip}",
+                                 (TOWER_X + flip * 0.5, TOWER_Y, brace_loc_z),
+                                 (0.12, 0.12, brace_h / 2))
+            brace.rotation_euler = (
+                math.radians(45 * flip) if axis == 'x' else 0,
+                math.radians(45 * flip) if axis == 'y' else 0,
+                0
+            )
+            assign_material(brace, mat_tower)
+
+# Service gantry swing arm (upper) — horizontal arm reaching toward rocket
+for arm_idx, arm_z in enumerate([26, 42, 58]):
+    arm_len = 9.0
+    arm_cx  = TOWER_X - arm_len / 2 - TOWER_W / 2
+    gantry_arm = add_cube(f"GantryArm_{arm_idx}", (arm_cx, TOWER_Y, arm_z), (arm_len / 2, 0.5, 0.4))
+    assign_material(gantry_arm, mat_steel)
+
+    # Access platform at arm end
+    arm_plat = add_cube(f"GantryPlatform_{arm_idx}", (arm_cx - arm_len / 2 + 0.8, TOWER_Y, arm_z + 0.5), (1.2, 1.4, 0.15))
+    assign_material(arm_plat, mat_steel)
+
+    # Umbilical cable stub (thin horizontal rod from arm toward rocket)
+    umbilical = add_cube(f"Umbilical_{arm_idx}", (arm_cx - arm_len / 2 - 1.0, TOWER_Y, arm_z), (0.8, 0.08, 0.08))
+    assign_material(umbilical, mat_dark_steel)
+
+# Vertical cable runs on tower face
+for ci in range(4):
+    cable = add_cube(f"TowerCable_{ci}", (TOWER_X - TOWER_W - 0.1, TOWER_Y - 1 + ci * 0.7, TOWER_H / 2 + 3), (0.05, 0.05, TOWER_H / 2))
+    assign_material(cable, mat_dark_steel)
+
+# Lightning rod on top of tower
+lightning_rod = add_cylinder("LightningRod", (TOWER_X, TOWER_Y, TOWER_H + 6), 0.1, 8.0)
+assign_material(lightning_rod, mat_steel)
+
+# Rotating service structure (simplified box on far side of tower)
+rss = add_cube("RSS_Box", (TOWER_X + TOWER_W + 1.0, TOWER_Y, 28), (1.2, 1.2, 22))
+assign_material(rss, mat_tower)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECONDARY INFRASTRUCTURE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Distant equipment building (left)
+bldg1 = add_cube("Building_Left", (-55, -20, 4), (10, 8, 4))
+assign_material(bldg1, mat_concrete)
+bldg1_roof = add_cube("Building_Left_Roof", (-55, -20, 8.3), (10.2, 8.2, 0.3))
+assign_material(bldg1_roof, mat_dark_steel)
+
+# Distant water tower (right far)
+wt_base = add_cylinder("WaterTower_Stem", (80, 30, 15), 0.8, 20.0)
+assign_material(wt_base, mat_steel)
+wt_tank = add_cube("WaterTower_Tank", (80, 30, 26), (4, 4, 5))
+assign_material(wt_tank, mat_steel)
+
+# Second smaller building (right)
+bldg2 = add_cube("Building_Right", (60, -30, 3), (8, 6, 3))
+assign_material(bldg2, mat_concrete)
+
+# Communication mast (far left)
+comm_mast = add_cylinder("CommMast", (-45, 15, 20), 0.25, 35.0)
+assign_material(comm_mast, mat_steel)
+comm_dish = add_cube("CommDish", (-45, 15, 38), (2, 0.2, 1.5))
+assign_material(comm_dish, mat_steel)
+
+# Fuel storage spheres (LOX / LH2 tanks)
+for si, (sx, sy, sr) in enumerate([(-25, -18, 5), (-18, -22, 3.5), (-30, -12, 4)]):
+    sphere_tank = add_cylinder(f"FuelSphere_{si}", (sx, sy, sr), sr, sr * 2)
+    assign_material(sphere_tank, mat_white)
+    set_smooth(sphere_tank)
+
+# Fuel tank connecting pipe
+fuel_pipe = add_cube("FuelPipe_Main", (-22, -15, 2), (6, 0.2, 0.2))
+assign_material(fuel_pipe, mat_steel)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SPACE SHUTTLE ASSEMBLY
+# All shuttle components are parented to "Shuttle_Root" for unified animation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Root empty — this is what gets animated (position keyframes go here)
+bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
+shuttle_root = bpy.context.active_object
+shuttle_root.name = "Shuttle_Root"
+
+
+# ── EXTERNAL TANK (ET) ──────────────────────────────────────────────────────
+
+# ET body (tall orange cylinder)
+et_body = add_cylinder("ET_Body", (0, 0, 28), 2.2, 44.0, parent=shuttle_root)
+assign_material(et_body, mat_orange_tank)
+set_smooth(et_body)
+
+# ET forward dome (nose cone - pointy top)
+bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=2.2, radius2=0.0, depth=5.0,
+                                  location=(0, 0, 52.5))
+et_nose = bpy.context.active_object
+et_nose.name = "ET_Nose"
+et_nose.parent = shuttle_root
+assign_material(et_nose, mat_orange_tank)
+set_smooth(et_nose)
+
+# ET aft dome
+bpy.ops.mesh.primitive_uv_sphere_add(radius=2.2, location=(0, 0, 6.0), segments=32, ring_count=16)
+et_aft = bpy.context.active_object
+et_aft.name = "ET_Aft_Dome"
+et_aft.scale.z = 0.5
+et_aft.parent = shuttle_root
+assign_material(et_aft, mat_orange_tank)
+set_smooth(et_aft)
+
+# ET intertank band (divides LOX from LH2 sections)
+et_band = add_cylinder("ET_Intertank", (0, 0, 30), 2.25, 1.2, parent=shuttle_root)
+assign_material(et_band, mat_dark_steel)
+
+
+# ── LEFT SOLID ROCKET BOOSTER (SRB) ─────────────────────────────────────────
+
+SRB_OFFSET = 3.0   # lateral distance from ET center
+
+# Left SRB body
+srb_l = add_cylinder("SRB_Left_Body", (-SRB_OFFSET, 0, 26), 1.0, 38.0, parent=shuttle_root)
+assign_material(srb_l, mat_srb)
+set_smooth(srb_l)
+
+# Left SRB nose cone
+bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=1.0, radius2=0.05, depth=5.5,
+                                  location=(-SRB_OFFSET, 0, 47.75))
+srb_l_nose = bpy.context.active_object
+srb_l_nose.name = "SRB_Left_Nose"
+srb_l_nose.parent = shuttle_root
+assign_material(srb_l_nose, mat_white)
+set_smooth(srb_l_nose)
+
+# Left SRB aft skirt
+srb_l_skirt = add_cylinder("SRB_Left_Skirt", (-SRB_OFFSET, 0, 6.5), 1.15, 3.0, parent=shuttle_root)
+assign_material(srb_l_skirt, mat_dark_steel)
+
+# Left SRB nozzle
+bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=0.9, radius2=0.4, depth=2.0,
+                                  location=(-SRB_OFFSET, 0, 4.8), rotation=(math.pi, 0, 0))
+srb_l_nozzle = bpy.context.active_object
+srb_l_nozzle.name = "SRB_Left_Nozzle"
+srb_l_nozzle.parent = shuttle_root
+assign_material(srb_l_nozzle, mat_nozzle)
+set_smooth(srb_l_nozzle)
+
+# Left SRB red NASA stripe
+srb_l_stripe = add_cylinder("SRB_Left_Stripe", (-SRB_OFFSET, 0, 28), 1.02, 0.8, parent=shuttle_root)
+assign_material(srb_l_stripe, mat_red_stripe)
+
+# Left SRB fore/aft attachment rings
+for az in [41, 12]:
+    ring = add_cylinder(f"SRB_L_Ring_{az}", (-SRB_OFFSET, 0, az), 1.05, 0.5, parent=shuttle_root)
+    assign_material(ring, mat_dark_steel)
+
+# Attach strut L (connecting SRB to ET)
+strut_l_top = add_cube("Strut_L_Top", (-SRB_OFFSET / 2, 0, 42), (SRB_OFFSET / 2 - 0.2, 0.2, 0.2))
+assign_material(strut_l_top, mat_steel)
+strut_l_top.parent = shuttle_root
+strut_l_bot = add_cube("Strut_L_Bot", (-SRB_OFFSET / 2, 0, 10), (SRB_OFFSET / 2 - 0.2, 0.2, 0.2))
+assign_material(strut_l_bot, mat_steel)
+strut_l_bot.parent = shuttle_root
+
+
+# ── RIGHT SOLID ROCKET BOOSTER (SRB) ────────────────────────────────────────
+
+srb_r = add_cylinder("SRB_Right_Body", (SRB_OFFSET, 0, 26), 1.0, 38.0, parent=shuttle_root)
+assign_material(srb_r, mat_srb)
+set_smooth(srb_r)
+
+bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=1.0, radius2=0.05, depth=5.5,
+                                  location=(SRB_OFFSET, 0, 47.75))
+srb_r_nose = bpy.context.active_object
+srb_r_nose.name = "SRB_Right_Nose"
+srb_r_nose.parent = shuttle_root
+assign_material(srb_r_nose, mat_white)
+set_smooth(srb_r_nose)
+
+srb_r_skirt = add_cylinder("SRB_Right_Skirt", (SRB_OFFSET, 0, 6.5), 1.15, 3.0, parent=shuttle_root)
+assign_material(srb_r_skirt, mat_dark_steel)
+
+bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=0.9, radius2=0.4, depth=2.0,
+                                  location=(SRB_OFFSET, 0, 4.8), rotation=(math.pi, 0, 0))
+srb_r_nozzle = bpy.context.active_object
+srb_r_nozzle.name = "SRB_Right_Nozzle"
+srb_r_nozzle.parent = shuttle_root
+assign_material(srb_r_nozzle, mat_nozzle)
+set_smooth(srb_r_nozzle)
+
+srb_r_stripe = add_cylinder("SRB_Right_Stripe", (SRB_OFFSET, 0, 28), 1.02, 0.8, parent=shuttle_root)
+assign_material(srb_r_stripe, mat_red_stripe)
+
+for az in [41, 12]:
+    ring = add_cylinder(f"SRB_R_Ring_{az}", (SRB_OFFSET, 0, az), 1.05, 0.5, parent=shuttle_root)
+    assign_material(ring, mat_dark_steel)
+
+strut_r_top = add_cube("Strut_R_Top", (SRB_OFFSET / 2, 0, 42), (SRB_OFFSET / 2 - 0.2, 0.2, 0.2))
+assign_material(strut_r_top, mat_steel)
+strut_r_top.parent = shuttle_root
+strut_r_bot = add_cube("Strut_R_Bot", (SRB_OFFSET / 2, 0, 10), (SRB_OFFSET / 2 - 0.2, 0.2, 0.2))
+assign_material(strut_r_bot, mat_steel)
+strut_r_bot.parent = shuttle_root
+
+
+# ── ORBITER FUSELAGE ─────────────────────────────────────────────────────────
+
+ORBITER_X = -2.8  # orbiter sits to left/front of ET
+
+# Forward fuselage (crew cabin area)
+orb_fwd = add_cylinder("Orbiter_ForwardFuselage", (ORBITER_X, 0, 45), 1.6, 10.0, parent=shuttle_root)
+orb_fwd.scale.x = 0.72
+bpy.ops.object.transform_apply(scale=True)
+assign_material(orb_fwd, mat_white)
+set_smooth(orb_fwd)
+
+# Orbiter nose cone
+bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=1.15, radius2=0.05, depth=5.5,
+                                  location=(ORBITER_X, 0, 52.25))
+orb_nose = bpy.context.active_object
+orb_nose.name = "Orbiter_Nose"
+orb_nose.parent = shuttle_root
+assign_material(orb_nose, mat_white)
+set_smooth(orb_nose)
+
+# Orbiter mid fuselage / payload bay
+orb_mid = add_cylinder("Orbiter_MidFuselage", (ORBITER_X, 0, 30), 1.7, 18.0, parent=shuttle_root)
+orb_mid.scale.x = 0.72
+bpy.ops.object.transform_apply(scale=True)
+assign_material(orb_mid, mat_white)
+set_smooth(orb_mid)
+
+# Orbiter aft fuselage
+orb_aft = add_cylinder("Orbiter_AftFuselage", (ORBITER_X, 0, 18), 1.8, 8.0, parent=shuttle_root)
+orb_aft.scale.x = 0.75
+bpy.ops.object.transform_apply(scale=True)
+assign_material(orb_aft, mat_white)
+set_smooth(orb_aft)
+
+# Orbiter belly (black TPS tiles)
+orb_belly = add_cube("Orbiter_Belly_TPS", (ORBITER_X, 0, 32), (1.2, 1.3, 20))
+assign_material(orb_belly, mat_black_tile)
+orb_belly.parent = shuttle_root
+
+# Vertical tail fin
+tail_fin = add_cube("Orbiter_TailFin", (ORBITER_X, 0, 25), (0.15, 1.5, 10))
+assign_material(tail_fin, mat_white)
+tail_fin.parent = shuttle_root
+
+tail_fin_fillet = add_cube("Orbiter_TailFin_Fillet", (ORBITER_X, 0, 20), (0.15, 0.8, 6))
+assign_material(tail_fin_fillet, mat_white)
+tail_fin_fillet.parent = shuttle_root
+
+# OMS pods (orbital maneuvering system — two bumps aft sides)
+for oms_x_off in [-1.0, 1.0]:
+    oms = add_cylinder(f"OMS_Pod_{'L' if oms_x_off < 0 else 'R'}",
+                       (ORBITER_X + oms_x_off * 0.6, 0, 21), 0.55, 4.0, parent=shuttle_root)
+    oms.scale.x = 0.8
+    bpy.ops.object.transform_apply(scale=True)
+    assign_material(oms, mat_white)
+    set_smooth(oms)
+
+# Delta wings (simplified flat volumes)
+for wing_sign in [-1, 1]:
+    side = 'L' if wing_sign < 0 else 'R'
+    # Wing root (thick, narrow chord near fuselage)
+    wing_root = add_cube(f"Wing_Root_{side}",
+                         (ORBITER_X + wing_sign * 1.8, 0, 24), (1.4, 0.18, 7.5))
+    assign_material(wing_root, mat_white)
+    wing_root.parent = shuttle_root
+
+    # Wing tip (thin, swept back)
+    wing_tip = add_cube(f"Wing_Tip_{side}",
+                        (ORBITER_X + wing_sign * 3.4, 0, 20.5), (1.0, 0.10, 5.5))
+    assign_material(wing_tip, mat_white)
+    wing_tip.parent = shuttle_root
+
+    # Wing leading edge (black)
+    le = add_cube(f"Wing_LE_{side}",
+                  (ORBITER_X + wing_sign * 2.4, 0.9 * wing_sign, 22.5), (1.3, 0.08, 6.0))
+    assign_material(le, mat_black_tile)
+    le.parent = shuttle_root
+
+# Cockpit windows (dark glass boxes)
+for wx, wz in [(-0.35, 50.8), (0.35, 50.8), (0.0, 49.5)]:
+    win = add_cube(f"Window_{wx}_{wz}", (ORBITER_X + wx, -1.55, wz), (0.28, 0.06, 0.22))
+    win_mat = make_material(f"MAT_Glass_{wx}", (0.05, 0.12, 0.28), roughness=0.05, metallic=0.1)
+    assign_material(win, win_mat)
+    win.parent = shuttle_root
+
+# Three SSME main engine nozzles
+for nx, ny in [(0, 0), (-0.8, 0.5), (0.8, 0.5)]:
+    bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=0.7, radius2=0.35, depth=2.2,
+                                     location=(ORBITER_X + nx, ny, 13.5), rotation=(math.pi, 0, 0))
+    ssme = bpy.context.active_object
+    ssme.name = f"SSME_{nx}_{ny}"
+    ssme.parent = shuttle_root
+    assign_material(ssme, mat_nozzle)
+    set_smooth(ssme)
+
+    # Inner nozzle bell throat
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.32, depth=0.5,
+                                         location=(ORBITER_X + nx, ny, 12.6))
+    throat = bpy.context.active_object
+    throat.name = f"SSME_Throat_{nx}_{ny}"
+    throat.parent = shuttle_root
+    assign_material(throat, mat_dark_steel)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXHAUST FLAME / PLUME OBJECT
+# (Visible from frame 241, grows upward — simple cone proxy for cycles light)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Point light to simulate engine glow — animated intensity
+bpy.ops.object.light_add(type='POINT', location=(0, 0, 10))
+engine_glow = bpy.context.active_object
+engine_glow.name = "EngineGlow_Light"
+engine_glow.parent = shuttle_root
+engine_glow.data.energy = 0
+engine_glow.data.color = (1.0, 0.65, 0.25)
+engine_glow.data.shadow_soft_size = 4.0
+engine_glow.data.use_shadow = True
+
+# Plume cone (visual proxy mesh — emission material)
+bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=3.5, radius2=0.5, depth=12.0,
+                                  location=(0, 0, 6.0), rotation=(math.pi, 0, 0))
+plume = bpy.context.active_object
+plume.name = "EnginePlume"
+plume.parent = shuttle_root
+plume_mat = make_material("MAT_Plume", (1.0, 0.6, 0.15),
+                           emission=(1.0, 0.55, 0.1), emission_strength=0.0)
+assign_material(plume, plume_mat)
+set_smooth(plume)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LIGHTING — EARLY MORNING CINEMATIC
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Primary sun light (key light) — low morning angle, warm golden
+bpy.ops.object.light_add(type='SUN', location=(0, 0, 50))
+sun = bpy.context.active_object
+sun.name = "Sun_Key"
+sun.data.energy          = 3.5
+sun.data.color           = (1.0, 0.85, 0.62)
+sun.data.angle           = math.radians(0.53)
+sun.rotation_euler       = (math.radians(82), 0.0, math.radians(-50))
+
+# Soft fill light — cool blue sky fill from opposite side
+bpy.ops.object.light_add(type='AREA', location=(-30, 40, 60))
+fill = bpy.context.active_object
+fill.name = "Fill_Sky"
+fill.data.energy  = 200
+fill.data.color   = (0.58, 0.72, 0.92)
+fill.data.size    = 40
+fill.rotation_euler = (math.radians(-40), 0, math.radians(30))
+
+# Ground bounce (warm) — subtle warm bounce from concrete
+bpy.ops.object.light_add(type='AREA', location=(0, 0, 2))
+bounce = bpy.context.active_object
+bounce.name = "Bounce_Ground"
+bounce.data.energy = 80
+bounce.data.color  = (0.95, 0.82, 0.60)
+bounce.data.size   = 30
+bounce.rotation_euler = (0, math.pi, 0)   # facing upward
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CAMERA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+cam_location = (-20.0, 30.0, 1.0)
+
+bpy.ops.object.camera_add(location=cam_location)
+cam_obj = bpy.context.active_object
+cam_obj.name = "MainCamera"
+
+# Better cinematic lens (20mm is too wide and causes distortion)
+cam_obj.data.lens = 10.0
+cam_obj.data.clip_end = 5000.0
+
+# ─────────────────────────────────────────────
+# FOCUS OBJECT (tracking target)
+# ─────────────────────────────────────────────
+
+focus = bpy.data.objects.new("Launch_Focus", None)
+bpy.context.collection.objects.link(focus)
+
+focus.empty_display_size = 2
+focus.empty_display_type = 'SPHERE'
+focus.location = (0, 0, 25)
+
+# ─────────────────────────────────────────────
+# SAFE CAMERA AIMING (IMPORTANT FIX)
+# ─────────────────────────────────────────────
+
+# Remove any default rotation issues
+cam_obj.rotation_euler = (0, 0, 0)
+
+# Use TRACK_TO instead of DAMPED_TRACK for predictable axis control
+track = cam_obj.constraints.new(type='TRACK_TO')
+track.target = focus
+track.track_axis = 'TRACK_NEGATIVE_Z'
+track.up_axis = 'UP_Y'
+
+# ─────────────────────────────────────────────
+# DEPTH OF FIELD (optional cinematic)
+# ─────────────────────────────────────────────
+
+cam_obj.data.dof.use_dof = True
+cam_obj.data.dof.focus_object = focus
+cam_obj.data.dof.aperture_fstop = 5.6
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ANIMATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Shuttle root starts at world origin (rocket sits on pad, base ~0)
+# The shuttle assembly is built so its base is near Z=0 of the root.
+
+# ── Engine glow / plume emission — keyframe energy & emission strength ────────
+
+# Access plume emission node
+plume_nodes = plume.material_slots[0].material.node_tree.nodes
+plume_bsdf = None
+for n in plume_nodes:
+    if n.type == 'BSDF_PRINCIPLED':
+        plume_bsdf = n
+        break
+
+# Frame 1 — all dark, pre-launch
+sc.frame_set(1)
+shuttle_root.location = (0, 0, 0)
+shuttle_root.keyframe_insert(data_path="location", index=-1)
+
+engine_glow.data.energy = 28000
+engine_glow.data.keyframe_insert(data_path="energy", frame=1)
+
+if plume_bsdf:
+    plume_bsdf.inputs['Emission Strength'].default_value = 50.0
+    plume_bsdf.inputs['Emission Strength'].keyframe_insert(data_path="default_value", frame=1)
+
+# Frame 120 — still stationary, end of wide static shot
+sc.frame_set(120)
+shuttle_root.location = (0, 0, 0)
+shuttle_root.keyframe_insert(data_path="location", index=-1)
+
+engine_glow.data.energy = 28000
+engine_glow.data.keyframe_insert(data_path="energy", frame=120)
+
+if plume_bsdf:
+    plume_bsdf.inputs['Emission Strength'].default_value = 50.0
+    plume_bsdf.inputs['Emission Strength'].keyframe_insert(data_path="default_value", frame=120)
+
+# Frame 230 — engine ignition begins (just before launch)
+sc.frame_set(230)
+shuttle_root.location = (0, 0, 0)
+shuttle_root.keyframe_insert(data_path="location", index=-1)
+
+engine_glow.data.energy = 28000
+engine_glow.data.keyframe_insert(data_path="energy", frame=230)
+
+if plume_bsdf:
+    plume_bsdf.inputs['Emission Strength'].default_value = 50.0
+    plume_bsdf.inputs['Emission Strength'].keyframe_insert(data_path="default_value", frame=230)
+
+# Frame 241 — hold-down bolts release, liftoff
+sc.frame_set(241)
+shuttle_root.location = (0, 0, 0)
+shuttle_root.keyframe_insert(data_path="location", index=-1)
+
+engine_glow.data.energy = 28000
+engine_glow.data.keyframe_insert(data_path="energy", frame=241)
+
+if plume_bsdf:
+    plume_bsdf.inputs['Emission Strength'].default_value = 50.0
+    plume_bsdf.inputs['Emission Strength'].keyframe_insert(data_path="default_value", frame=241)
+
+# Frame 290 — clear the tower
+sc.frame_set(290)
+shuttle_root.location = (0, 0, 40)
+shuttle_root.keyframe_insert(data_path="location", index=-1)
+
+engine_glow.data.energy = 22000
+engine_glow.data.keyframe_insert(data_path="energy", frame=290)
+
+if plume_bsdf:
+    plume_bsdf.inputs['Emission Strength'].default_value = 40.0
+    plume_bsdf.inputs['Emission Strength'].keyframe_insert(data_path="default_value", frame=290)
+
+# Frame 380 — rapid acceleration, halfway up the frame
+sc.frame_set(380)
+shuttle_root.location = (0, 0, 150)
+shuttle_root.keyframe_insert(data_path="location", index=-1)
+
+engine_glow.data.energy = 25000
+engine_glow.data.keyframe_insert(data_path="energy", frame=380)
+
+if plume_bsdf:
+    plume_bsdf.inputs['Emission Strength'].default_value = 45.0
+    plume_bsdf.inputs['Emission Strength'].keyframe_insert(data_path="default_value", frame=380)
+
+# Frame 460 — shuttle fully exits frame (very fast, top of frame clear)
+sc.frame_set(460)
+shuttle_root.location = (0, 0, 380)
+shuttle_root.keyframe_insert(data_path="location", index=-1)
+
+engine_glow.data.energy = 28000
+engine_glow.data.keyframe_insert(data_path="energy", frame=460)
+
+if plume_bsdf:
+    plume_bsdf.inputs['Emission Strength'].default_value = 50.0
+    plume_bsdf.inputs['Emission Strength'].keyframe_insert(data_path="default_value", frame=460)
+
+# Frame 480 — well outside frame, animation ends
+sc.frame_set(480)
+shuttle_root.location = (0, 0, 600)
+shuttle_root.keyframe_insert(data_path="location", index=-1)
+
+engine_glow.data.energy = 28000
+engine_glow.data.keyframe_insert(data_path="energy", frame=480)
+
+if plume_bsdf:
+    plume_bsdf.inputs['Emission Strength'].default_value = 50.0
+    plume_bsdf.inputs['Emission Strength'].keyframe_insert(data_path="default_value", frame=480)
+
+
+# ── Apply Bezier interpolation to all shuttle_root fcurves ───────────────────
+ 
+bpy.context.view_layer.objects.active = shuttle_root
+if shuttle_root.animation_data and shuttle_root.animation_data.action:
+    for fc in shuttle_root.animation_data.action.fcurves:  
+        for kp in fc.keyframe_points:
+            kp.interpolation = 'BEZIER'
+        # Set easing — slow start, fast exit (ease in for acceleration)
+        for kp in fc.keyframe_points:
+            kp.easing = 'EASE_IN'
+ 
+# Apply Bezier to engine glow light
+if engine_glow.data.animation_data and engine_glow.data.animation_data.action:
+    for fc in engine_glow.data.animation_data.action.fcurves:
+        for kp in fc.keyframe_points:
+            kp.interpolation = 'BEZIER'
+ 
+# Apply Bezier to plume emission if present
+if plume_bsdf and plume_bsdf.inputs['Emission Strength'].is_animated():
+    if plume.material_slots[0].material.node_tree.animation_data:
+        anim_data = plume.material_slots[0].material.node_tree.animation_data
+        if anim_data.action:
+            for fc in anim_data.action.fcurves:
+                for kp in fc.keyframe_points:
+                    kp.interpolation = 'BEZIER'
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FINAL SCENE RESET
+# ═══════════════════════════════════════════════════════════════════════════════
+
+sc.frame_set(1)
+bpy.context.view_layer.objects.active = cam_obj
+
+print("=== Rocket Launch Scene: BUILD COMPLETE ===")
+print(f"Total frames: {TOTAL_FRAMES} ({SCENE_DURATION}s @ {FPS}fps)")
+print("Shot 1A: Frames   1–120  | Static wide shot")
+print("Shot 1B: Frames 121–240  | Countdown, ignition begins at 230")
+print("Shot 1C: Frames 241–480  | Launch — rocket exits frame")
+

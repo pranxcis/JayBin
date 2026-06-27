@@ -1,0 +1,136 @@
+import bpy
+import math
+
+# ==== TEXTURE PATHS ====
+saturn_texture_path = r"C:\Users\Francis Balbin\Downloads\Francis\Solar System Blender\Planets Resources\Saturn.jpg"
+ring_texture_path = r"C:\Users\Francis Balbin\Downloads\Francis\Solar System Blender\Planets Resources\Saturn Rings.png"
+
+# ==== CLEAN SCENE ====
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete(use_global=False)
+bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
+# ==== CREATE SATURN SPHERE ====
+bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, radius=1.0, location=(0, 0, 0))
+saturn = bpy.context.active_object
+saturn.name = "Saturn"
+bpy.ops.object.shade_smooth()
+
+# ==== SATURN MATERIAL ====
+mat = bpy.data.materials.new(name="SaturnMaterial")
+mat.use_nodes = True
+nodes = mat.node_tree.nodes
+links = mat.node_tree.links
+nodes.clear()
+
+tex_image = nodes.new(type='ShaderNodeTexImage')
+tex_image.image = bpy.data.images.load(saturn_texture_path)
+tex_image.location = (-500, 0)
+
+bsdf = nodes.new(type='ShaderNodeBsdfPrincipled')
+bsdf.location = (-200, 0)
+
+output = nodes.new(type='ShaderNodeOutputMaterial')
+output.location = (200, 0)
+
+links.new(tex_image.outputs['Color'], bsdf.inputs['Base Color'])
+links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+saturn.data.materials.append(mat)
+
+# ==== CREATE RINGS (PLANE) ====
+bpy.ops.mesh.primitive_plane_add(size=4.5, location=(0, 0, 0))
+rings = bpy.context.active_object
+rings.name = "Saturn_Rings"
+rings.rotation_euler[0] = 0.306
+
+# ==== RING MATERIAL ====
+ring_mat = bpy.data.materials.new(name="RingMaterial")
+ring_mat.use_nodes = True
+
+
+nodes = ring_mat.node_tree.nodes
+links = ring_mat.node_tree.links
+nodes.clear()
+
+tex = nodes.new(type='ShaderNodeTexImage')
+tex.image = bpy.data.images.load(ring_texture_path)
+tex.location = (-500, 0)
+
+emission = nodes.new(type='ShaderNodeEmission')
+emission.location = (-200, 100)
+emission.inputs['Strength'].default_value = 1.0
+
+transparent = nodes.new(type='ShaderNodeBsdfTransparent')
+transparent.location = (-200, -100)
+
+mix = nodes.new(type='ShaderNodeMixShader')
+mix.location = (100, 0)
+
+output = nodes.new(type='ShaderNodeOutputMaterial')
+output.location = (350, 0)
+
+links.new(tex.outputs['Color'], emission.inputs['Color'])
+links.new(tex.outputs['Alpha'], mix.inputs['Fac'])
+links.new(transparent.outputs['BSDF'], mix.inputs[1])
+links.new(emission.outputs['Emission'], mix.inputs[2])
+links.new(mix.outputs['Shader'], output.inputs['Surface'])
+
+rings.data.materials.append(ring_mat)
+
+# ==== LIGHT ====
+bpy.ops.object.light_add(type='SUN', location=(5, -5, 5))
+sun = bpy.context.active_object
+sun.data.energy = 5
+sun.rotation_euler = (0.9, 0, 0.8)
+
+# ==== CAMERA — -Y view ====
+bpy.ops.object.camera_add(location=(0, -6, 0), rotation=(math.radians(90), 0, 0))
+camera = bpy.context.active_object
+camera.name = "MainCamera"
+camera.data.lens = 35
+bpy.context.scene.camera = camera
+
+# ==== RENDER SETTINGS ====
+bpy.context.scene.render.engine = 'CYCLES'
+bpy.context.scene.cycles.device = 'GPU'
+bpy.context.scene.render.film_transparent = False
+
+# ==== ANIMATION SETTINGS ====
+scene = bpy.context.scene
+scene.frame_start = 1
+scene.frame_end = 120
+scene.render.fps = 24  
+
+# ---- SATURN ROTATION ----
+saturn.rotation_euler[2] = 0
+saturn.keyframe_insert(data_path="rotation_euler", frame=1)
+saturn.rotation_euler[2] = math.radians(360)
+saturn.keyframe_insert(data_path="rotation_euler", frame=120)
+
+# ---- RING ROTATION — independent, slow drift ----
+rings.rotation_euler[2] = 0
+rings.keyframe_insert(data_path="rotation_euler", frame=1)
+rings.rotation_euler[2] = math.radians(45)
+rings.keyframe_insert(data_path="rotation_euler", frame=120)
+
+# ---- LINEAR INTERPOLATION ----
+for obj in [saturn, rings]:
+    if obj.animation_data and obj.animation_data.action:
+        for fcurve in obj.animation_data.action.fcurves: 
+            for kp in fcurve.keyframe_points:
+                kp.interpolation = 'LINEAR'
+
+# ==== RENDER OPTIMIZATION ====
+scene.render.use_persistent_data = True
+scene.cycles.samples = 128
+scene.cycles.preview_samples = 32
+scene.cycles.use_adaptive_sampling = True
+scene.cycles.use_denoising = True
+scene.cycles.denoiser = 'OPENIMAGEDENOISE'
+
+# ==== TRANSPARENT BACKGROUND ====
+scene.render.film_transparent = True
+scene.render.image_settings.color_mode = 'RGBA'  # Enable alpha channel
+
+# ==== FINAL CAMERA SAFETY ====
+bpy.context.scene.camera = bpy.data.objects["MainCamera"]

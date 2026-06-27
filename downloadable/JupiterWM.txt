@@ -1,0 +1,280 @@
+import bpy
+import math
+import os
+import random
+
+# ============================================================
+# JupiterWM.py — Jupiter with 92 Moons
+# Blender 5.1.2 | Cycles GPU | 120 frames @ 24 FPS
+# ============================================================
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+PLANET_NAME  = "Jupiter"
+TEXTURE_PATH = r"C:\Users\Francis Balbin\Downloads\Francis\Solar System Blender\Planets Resources\Jupiter.jpg"  # 🔁 Replace with your actual file path
+
+SUN_ENERGY        = 2
+SUN_ROTATION      = (0.9, 0.0, 0.8)
+SUN_ANGLE         = 0.02
+
+CAMERA_LOCATION   = (0.0, -6.0, 0.0)
+CAMERA_ROTATION   = (math.radians(90), 0.0, 0.0)
+CAMERA_LENS       = 35
+
+FRAME_START       = 1
+FRAME_END         = 120
+FPS               = 24
+
+PLANET_ROTATION_Z = math.radians(720)   # 2 full spins (fast Jupiter rotation)
+
+SAMPLES           = 64
+PREVIEW_SAMPLES   = 32
+
+MOON_COUNT        = 92
+RANDOM_SEED       = 42   # fixed seed for reproducible layout
+
+
+# ============================================================
+# GLOBAL ANIMATION SETTINGS
+# ============================================================
+
+# Force Blender to create LINEAR keyframes by default (fixes the Action error)
+bpy.context.preferences.edit.keyframe_new_interpolation_type = 'LINEAR'
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def make_rocky_moon_material(name):
+    """Return a neutral gray rocky Principled BSDF material (no textures)."""
+    mat = bpy.data.materials.new(name=name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (-200, 0)
+    # Slight color variation per material name hash for visual diversity
+    h = abs(hash(name)) % 100 / 100.0
+    gray = 0.30 + h * 0.25
+    bsdf.inputs["Base Color"].default_value   = (gray, gray * 0.97, gray * 0.94, 1.0)
+    bsdf.inputs["Roughness"].default_value    = 0.75 + h * 0.20
+    bsdf.inputs["Specular IOR Level"].default_value = 0.04
+
+    out = nodes.new("ShaderNodeOutputMaterial")
+    out.location = (100, 0)
+    links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return mat
+
+
+def add_moon(name, radius, speed, incl_deg, tilt_deg, size, mat, rng):
+    """Create one moon with its own orbit empty, animate both."""
+    # Orbit empty — pivot at planet center
+    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
+    orbit_empty = bpy.context.active_object
+    orbit_empty.name = f"{name}_Orbit"
+
+    # Spread inclination and initial phase around the orbit
+    orbit_empty.rotation_euler[0] = math.radians(incl_deg)
+    orbit_empty.rotation_euler[1] = math.radians(rng.uniform(0, 360))  # initial longitude
+
+    # Moon sphere, offset along X from empty center
+    bpy.ops.mesh.primitive_uv_sphere_add(
+        segments=16, ring_count=8,
+        radius=size,
+        location=(radius, 0.0, 0.0)
+    )
+    moon = bpy.context.active_object
+    moon.name = name
+    moon.rotation_euler[0] = math.radians(tilt_deg)
+    bpy.ops.object.shade_smooth()
+    moon.data.materials.append(mat)
+    moon.parent = orbit_empty
+
+    # Orbit animation
+    total_angle = math.radians(360) * speed
+    orbit_empty.rotation_euler[2] = 0.0
+    orbit_empty.keyframe_insert(data_path="rotation_euler", frame=FRAME_START)
+    orbit_empty.rotation_euler[2] = total_angle
+    orbit_empty.keyframe_insert(data_path="rotation_euler", frame=FRAME_END)
+
+    # Self-rotation animation
+    moon.rotation_euler[2] = 0.0
+    moon.keyframe_insert(data_path="rotation_euler", frame=FRAME_START)
+    moon.rotation_euler[2] = math.radians(360)
+    moon.keyframe_insert(data_path="rotation_euler", frame=FRAME_END)
+
+
+# ============================================================
+# SCENE CLEANUP
+# ============================================================
+
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete(use_global=False)
+bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
+
+# ============================================================
+# PLANET — JUPITER
+# ============================================================
+
+bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, radius=1.0, location=(0, 0, 0))
+planet = bpy.context.active_object
+planet.name = PLANET_NAME
+bpy.ops.object.shade_smooth()
+
+mat_planet = bpy.data.materials.new(name=f"{PLANET_NAME}Material")
+mat_planet.use_nodes = True
+nodes = mat_planet.node_tree.nodes
+links = mat_planet.node_tree.links
+nodes.clear()
+
+tex_node = nodes.new("ShaderNodeTexImage")
+tex_node.image = bpy.data.images.load(TEXTURE_PATH)
+tex_node.location = (-500, 0)
+
+bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+bsdf.location = (-200, 0)
+
+out = nodes.new("ShaderNodeOutputMaterial")
+out.location = (200, 0)
+
+links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+links.new(bsdf.outputs["BSDF"],     out.inputs["Surface"])
+
+planet.data.materials.append(mat_planet)
+
+
+# ============================================================
+# MOON GENERATION — 92 MOONS
+# ============================================================
+
+rng = random.Random(RANDOM_SEED)
+
+# Shared material pool (8 variants for performance vs. visual diversity)
+MATERIAL_POOL = [make_rocky_moon_material(f"MoonRockyMat_{i:02d}") for i in range(8)]
+
+# Jupiter's moons span a huge range of orbits.
+INNER_COUNT    = 4
+GALILEAN_COUNT = 4
+OUTER_COUNT    = MOON_COUNT - INNER_COUNT - GALILEAN_COUNT   # 84
+
+moon_index = 0
+
+# --- Inner moons (Amalthea group) ---
+for i in range(INNER_COUNT):
+    moon_index += 1
+    name   = f"Moon_{moon_index:03d}"
+    radius = rng.uniform(1.30, 1.65)
+    speed  = rng.uniform(4.0, 6.0)
+    incl   = rng.uniform(0.0, 5.0)
+    tilt   = rng.uniform(0.0, 10.0)
+    size   = rng.uniform(0.022, 0.040)
+    mat    = MATERIAL_POOL[moon_index % len(MATERIAL_POOL)]
+    add_moon(name, radius, speed, incl, tilt, size, mat, rng)
+
+# --- Galilean moons (Io, Europa, Ganymede, Callisto) ---
+galilean_data = [
+    (1.80, 5.0, 0.04, 3.0,  0.065),  # Io
+    (2.10, 3.5, 0.47, 2.5,  0.055),  # Europa
+    (2.55, 2.2, 0.19, 3.5,  0.085),  # Ganymede
+    (3.10, 1.4, 0.28, 4.0,  0.075),  # Callisto
+]
+for gd in galilean_data:
+    moon_index += 1
+    name = f"Moon_{moon_index:03d}"
+    mat  = MATERIAL_POOL[moon_index % len(MATERIAL_POOL)]
+    add_moon(name, gd[0], gd[1], gd[2], gd[3], gd[4], mat, rng)
+
+# --- Outer irregular moons (84 moons) ---
+for i in range(OUTER_COUNT):
+    moon_index += 1
+    name = f"Moon_{moon_index:03d}"
+
+    # Spread radii in shells: 3.5 to 9.0 BU
+    t      = i / max(OUTER_COUNT - 1, 1)
+    radius = 3.5 + t * 5.5 + rng.uniform(-0.25, 0.25)
+    speed  = rng.uniform(0.15, 0.80)
+    # Retrograde flag: ~50% of outer moons orbit retrograde
+    if rng.random() < 0.5:
+        speed = -speed
+    incl   = rng.uniform(10.0, 60.0)
+    tilt   = rng.uniform(0.0, 20.0)
+    size   = rng.uniform(0.010, 0.028)
+    mat    = MATERIAL_POOL[moon_index % len(MATERIAL_POOL)]
+    add_moon(name, radius, speed, incl, tilt, size, mat, rng)
+
+
+# ============================================================
+# LIGHTING
+# ============================================================
+
+bpy.ops.object.light_add(type="SUN", location=(5, -5, 5))
+sun = bpy.context.active_object
+sun.name = "Sun"
+sun.data.energy    = SUN_ENERGY
+sun.rotation_euler = SUN_ROTATION
+sun.data.angle     = SUN_ANGLE
+
+
+# ============================================================
+# CAMERA
+# ============================================================
+
+bpy.ops.object.camera_add(location=CAMERA_LOCATION, rotation=CAMERA_ROTATION)
+camera = bpy.context.active_object
+camera.name           = "Camera"
+camera.data.lens      = CAMERA_LENS
+bpy.context.scene.camera = camera
+
+
+# ============================================================
+# ANIMATION — PLANET ROTATION
+# ============================================================
+
+scene = bpy.context.scene
+scene.frame_start = FRAME_START
+scene.frame_end   = FRAME_END
+scene.render.fps  = FPS
+
+planet.rotation_euler[2] = 0.0
+planet.keyframe_insert(data_path="rotation_euler", frame=FRAME_START)
+planet.rotation_euler[2] = PLANET_ROTATION_Z
+planet.keyframe_insert(data_path="rotation_euler", frame=FRAME_END)
+
+
+# ============================================================
+# RENDER CONFIGURATION
+# ============================================================
+
+scene.render.engine           = "CYCLES"
+scene.cycles.device           = "GPU"
+scene.render.film_transparent = False
+
+# World: pure black
+scene.world.use_nodes = True
+scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.0
+
+scene.cycles.samples              = SAMPLES
+scene.cycles.preview_samples      = PREVIEW_SAMPLES
+scene.cycles.use_adaptive_sampling = True
+
+# Reduced bounces — black background wastes no rays
+scene.cycles.max_bounces              = 4
+scene.cycles.diffuse_bounces          = 2
+scene.cycles.glossy_bounces           = 2
+scene.cycles.transmission_bounces     = 2
+scene.cycles.volume_bounces           = 0
+scene.cycles.transparent_max_bounces  = 4
+
+scene.cycles.use_denoising  = True
+scene.cycles.denoiser       = "OPENIMAGEDENOISE"
+
+scene.render.use_persistent_data = True
+
+print(f"✅ JupiterWM.py — Jupiter + {MOON_COUNT} moons created successfully.")

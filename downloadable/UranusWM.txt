@@ -1,0 +1,333 @@
+import bpy
+import math
+import os
+import random
+
+# ============================================================
+# UranusWM.py — Uranus with 27 Moons + Textured Flat Rings
+# Blender 5.1.2 | Cycles GPU | 120 frames @ 24 FPS
+# ============================================================
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+PLANET_NAME  = "Uranus"
+TEXTURE_PATH = r"C:\Users\Francis Balbin\Downloads\Francis\Solar System Blender\Planets Resources\Uranus.jpg"  # 🔁 Replace with your actual file path
+ring_texture_path = r"C:\Users\Francis Balbin\Downloads\Francis\Solar System Blender\Planets Resources\Uranus Rings.png"
+
+SUN_ENERGY        = 3
+SUN_ROTATION      = (0.9, 0.0, 0.8)
+SUN_ANGLE         = 0.02
+
+CAMERA_LOCATION   = (0.0, -6.0, 0.0)
+CAMERA_ROTATION   = (math.radians(90), 0.0, 0.0)
+CAMERA_LENS       = 35
+
+FRAME_START       = 1
+FRAME_END         = 120
+FPS               = 24
+
+# Uranus rotates on its side — strong axial tilt (~98°)
+PLANET_AXIAL_TILT = math.radians(-56)
+PLANET_ROTATION_Z = math.radians(360)   # 1 full spin
+
+SAMPLES           = 64
+PREVIEW_SAMPLES   = 32
+
+MOON_COUNT        = 27
+RANDOM_SEED       = 17
+
+# Flat Ring size parameter matching your Saturn template
+RING_SIZE         = 3.2
+
+
+# ============================================================
+# GLOBAL ANIMATION SETTINGS
+# ============================================================
+
+# Force Blender to create LINEAR keyframes by default
+bpy.context.preferences.edit.keyframe_new_interpolation_type = 'LINEAR'
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def make_rocky_moon_material(name):
+    """Neutral gray rocky Principled BSDF material (no textures)."""
+    mat = bpy.data.materials.new(name=name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (-200, 0)
+    h = abs(hash(name)) % 100 / 100.0
+    gray = 0.30 + h * 0.28
+    bsdf.inputs["Base Color"].default_value   = (gray, gray * 0.98, gray * 0.96, 1.0)
+    bsdf.inputs["Roughness"].default_value    = 0.80 + h * 0.15
+    bsdf.inputs["Specular IOR Level"].default_value = 0.03
+
+    out = nodes.new("ShaderNodeOutputMaterial")
+    out.location = (100, 0)
+    links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return mat
+
+
+def add_moon(name, radius, speed, incl_deg, tilt_deg, size, mat, rng):
+    """Create one moon with orbit empty and animate both."""
+    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
+    orbit_empty = bpy.context.active_object
+    orbit_empty.name = f"{name}_Orbit"
+    orbit_empty.rotation_euler[0] = math.radians(incl_deg)
+    orbit_empty.rotation_euler[1] = math.radians(rng.uniform(0, 360))
+
+    bpy.ops.mesh.primitive_uv_sphere_add(
+        segments=16, ring_count=8,
+        radius=size,
+        location=(radius, 0.0, 0.0)
+    )
+    moon = bpy.context.active_object
+    moon.name = name
+    moon.rotation_euler[0] = math.radians(tilt_deg)
+    bpy.ops.object.shade_smooth()
+    moon.data.materials.append(mat)
+    moon.parent = orbit_empty
+
+    total_angle = math.radians(360) * speed
+    orbit_empty.rotation_euler[2] = 0.0
+    orbit_empty.keyframe_insert(data_path="rotation_euler", frame=FRAME_START)
+    orbit_empty.rotation_euler[2] = total_angle
+    orbit_empty.keyframe_insert(data_path="rotation_euler", frame=FRAME_END)
+
+    moon.rotation_euler[2] = 0.0
+    moon.keyframe_insert(data_path="rotation_euler", frame=FRAME_START)
+    moon.rotation_euler[2] = math.radians(360)
+    moon.keyframe_insert(data_path="rotation_euler", frame=FRAME_END)
+
+
+# ============================================================
+# SCENE CLEANUP
+# ============================================================
+
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete(use_global=False)
+bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
+
+# ============================================================
+# PLANET — URANUS
+# ============================================================
+
+bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, radius=1.0, location=(0, 0, 0))
+planet = bpy.context.active_object
+planet.name = PLANET_NAME
+planet.rotation_euler[0] = PLANET_AXIAL_TILT   # Uranus rolls on its side
+bpy.ops.object.shade_smooth()
+
+mat_planet = bpy.data.materials.new(name=f"{PLANET_NAME}Material")
+mat_planet.use_nodes = True
+nodes = mat_planet.node_tree.nodes
+links = mat_planet.node_tree.links
+nodes.clear()
+
+tex_node = nodes.new("ShaderNodeTexImage")
+tex_node.image = bpy.data.images.load(TEXTURE_PATH)
+tex_node.location = (-500, 0)
+
+bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+bsdf.location = (-200, 0)
+
+out = nodes.new("ShaderNodeOutputMaterial")
+out.location = (200, 0)
+
+links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+links.new(bsdf.outputs["BSDF"],     out.inputs["Surface"])
+
+planet.data.materials.append(mat_planet)
+
+
+# ============================================================
+# RING GEOMETRY GENERATION (PLANE)
+# ============================================================
+
+bpy.ops.mesh.primitive_plane_add(size=RING_SIZE, location=(0, 0, 0))
+ring = bpy.context.active_object
+ring.name = "UranusRings"
+
+# Align the ring plane with Uranus's sideways axial tilt
+ring.rotation_euler[1] = PLANET_AXIAL_TILT
+
+
+# ============================================================
+# RING MATERIAL SETUP (TEXTURED ALPHA MIX SHADER)
+# ============================================================
+
+ring_mat = bpy.data.materials.new(name="RingMaterial")
+ring_mat.use_nodes = True
+ring_mat.blend_method = "BLEND"  # Ensures alpha rendering shows up correctly in viewport
+
+r_nodes = ring_mat.node_tree.nodes
+r_links = ring_mat.node_tree.links
+r_nodes.clear()
+
+tex = r_nodes.new(type='ShaderNodeTexImage')
+tex.image = bpy.data.images.load(ring_texture_path)
+tex.location = (-500, 0)
+
+emission = r_nodes.new(type='ShaderNodeEmission')
+emission.location = (-200, 100)
+emission.inputs['Strength'].default_value = 1.0
+
+transparent = r_nodes.new(type='ShaderNodeBsdfTransparent')
+transparent.location = (-200, -100)
+
+mix = r_nodes.new(type='ShaderNodeMixShader')
+mix.location = (100, 0)
+
+output = r_nodes.new(type='ShaderNodeOutputMaterial')
+output.location = (350, 0)
+
+r_links.new(tex.outputs['Color'], emission.inputs['Color'])
+r_links.new(tex.outputs['Alpha'], mix.inputs['Fac'])
+r_links.new(transparent.outputs['BSDF'], mix.inputs[1])
+r_links.new(emission.outputs['Emission'], mix.inputs[2])
+r_links.new(mix.outputs['Shader'], output.inputs['Surface'])
+
+ring.data.materials.append(ring_mat)
+
+
+# ============================================================
+# MOON GENERATION — 27 MOONS
+# ============================================================
+
+rng = random.Random(RANDOM_SEED)
+
+MATERIAL_POOL = [make_rocky_moon_material(f"MoonRockyMat_{i:02d}") for i in range(6)]
+
+INNER_COUNT     = 13
+MAJOR_COUNT     = 5
+IRREGULAR_COUNT = MOON_COUNT - INNER_COUNT - MAJOR_COUNT   # 9
+
+moon_index = 0
+
+# --- Inner moons ---
+for i in range(INNER_COUNT):
+    moon_index += 1
+    name   = f"Moon_{moon_index:03d}"
+    radius = rng.uniform(1.20, 1.52)
+    speed  = rng.uniform(3.5, 7.0)
+    incl   = rng.uniform(0.0, 4.0)
+    tilt   = rng.uniform(0.0, 8.0)
+    size   = rng.uniform(0.015, 0.028)
+    mat    = MATERIAL_POOL[moon_index % len(MATERIAL_POOL)]
+    add_moon(name, radius, speed, incl, tilt, size, mat, rng)
+
+# --- Major classical moons ---
+major_data = [
+    (2.30, 3.0,  4.0,  5.0,  0.045),  # Miranda
+    (2.65, 2.2,  0.3,  3.0,  0.060),  # Ariel
+    (3.00, 1.8,  0.36, 4.0,  0.058),  # Umbriel
+    (3.55, 1.3,  0.10, 3.5,  0.080),  # Titania
+    (4.10, 0.9,  0.07, 2.5,  0.075),  # Oberon
+]
+for gd in major_data:
+    moon_index += 1
+    name = f"Moon_{moon_index:03d}"
+    mat  = MATERIAL_POOL[moon_index % len(MATERIAL_POOL)]
+    add_moon(name, gd[0], gd[1], gd[2], gd[3], gd[4], mat, rng)
+
+# --- Outer irregular moons ---
+for i in range(IRREGULAR_COUNT):
+    moon_index += 1
+    name   = f"Moon_{moon_index:03d}"
+    t      = i / max(IRREGULAR_COUNT - 1, 1)
+    radius = 4.8 + t * 4.2 + rng.uniform(-0.2, 0.2)
+    speed  = rng.uniform(0.20, 0.70)
+    if rng.random() < 0.6:
+        speed = -speed
+    incl   = rng.uniform(15.0, 55.0)
+    tilt   = rng.uniform(0.0, 25.0)
+    size   = rng.uniform(0.012, 0.024)
+    mat    = MATERIAL_POOL[moon_index % len(MATERIAL_POOL)]
+    add_moon(name, radius, speed, incl, tilt, size, mat, rng)
+
+
+# ============================================================
+# LIGHTING
+# ============================================================
+
+bpy.ops.object.light_add(type="SUN", location=(5, -5, 5))
+sun = bpy.context.active_object
+sun.name = "Sun"
+sun.data.energy    = SUN_ENERGY
+sun.rotation_euler = SUN_ROTATION
+sun.data.angle     = SUN_ANGLE
+
+
+# ============================================================
+# CAMERA
+# ============================================================
+
+bpy.ops.object.camera_add(location=CAMERA_LOCATION, rotation=CAMERA_ROTATION)
+camera = bpy.context.active_object
+camera.name           = "Camera"
+camera.data.lens      = CAMERA_LENS
+bpy.context.scene.camera = camera
+
+
+# ============================================================
+# ANIMATION — PLANET & RING ROTATION
+# ============================================================
+
+scene = bpy.context.scene
+scene.frame_start = FRAME_START
+scene.frame_end   = FRAME_END
+scene.render.fps  = FPS
+
+# Animate planet rotation around Z (while tilted)
+planet.keyframe_insert(data_path="rotation_euler", frame=FRAME_START)
+planet.rotation_euler[2] = PLANET_ROTATION_Z
+planet.keyframe_insert(data_path="rotation_euler", frame=FRAME_END)
+
+# ---- RING ROTATION — independent, slow drift ----
+ring.rotation_euler[2] = -0.30 
+ring.keyframe_insert(data_path="rotation_euler", frame=FRAME_START)
+ring.rotation_euler[2] = math.radians(15)
+ring.keyframe_insert(data_path="rotation_euler", frame=FRAME_END)
+
+
+# ============================================================
+# RENDER CONFIGURATION
+# ============================================================
+
+scene.render.engine           = "CYCLES"
+scene.cycles.device           = "GPU"
+
+# Transparent background optimization options
+scene.render.film_transparent = True
+scene.render.image_settings.color_mode = 'RGBA'
+
+scene.world.use_nodes = True
+scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.0
+
+scene.cycles.samples              = SAMPLES
+scene.cycles.preview_samples      = PREVIEW_SAMPLES
+scene.cycles.use_adaptive_sampling = True
+
+scene.cycles.max_bounces              = 4
+scene.cycles.diffuse_bounces          = 2
+scene.cycles.glossy_bounces           = 2
+scene.cycles.transmission_bounces     = 4   
+scene.cycles.volume_bounces           = 0
+scene.cycles.transparent_max_bounces  = 8   # Highly vital for smooth ring trans-fades
+
+scene.cycles.use_denoising  = True
+scene.cycles.denoiser       = "OPENIMAGEDENOISE"
+
+scene.render.use_persistent_data = True
+
+print(f"✅ UranusWM.py — Flat plane rings textured successfully for {PLANET_NAME}.")

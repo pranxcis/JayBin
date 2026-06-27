@@ -1,0 +1,140 @@
+import bpy
+
+# ==== TEXTURE PATHS ====
+surface_texture_path = r"C:\Users\Francis Balbin\Downloads\Francis\Solar System Blender\Planets Resources\Venus.jpg"       # CHANGE THIS
+atmosphere_texture_path = r"C:\Users\Francis Balbin\Downloads\Francis\Solar System Blender\Planets Resources\Venus Atmosphere.jpg" # CHANGE THIS
+
+# ==== CLEAN SCENE ====
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete(use_global=False)
+bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
+# ==== BASE SPHERE (VENUS SURFACE) ====
+bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, radius=1, location=(0, 0, 0))
+venus_surface = bpy.context.active_object
+venus_surface.name = "Venus_Surface"
+bpy.ops.object.shade_smooth()
+
+# ==== SURFACE MATERIAL ====
+mat_surface = bpy.data.materials.new(name="VenusSurfaceMaterial")
+mat_surface.use_nodes = True
+nodes = mat_surface.node_tree.nodes
+links = mat_surface.node_tree.links
+nodes.clear()
+
+# Nodes for surface
+tex_image = nodes.new(type='ShaderNodeTexImage')
+tex_image.image = bpy.data.images.load(surface_texture_path)
+bsdf = nodes.new(type='ShaderNodeBsdfPrincipled')
+output = nodes.new(type='ShaderNodeOutputMaterial')
+
+# Link nodes
+links.new(tex_image.outputs['Color'], bsdf.inputs['Base Color'])
+links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+
+# Assign material
+venus_surface.data.materials.append(mat_surface)
+
+# ==== ATMOSPHERE SPHERE (SLIGHTLY LARGER) ====
+bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, radius=1.01, location=(0, 0, 0))
+venus_atmosphere = bpy.context.active_object
+venus_atmosphere.name = "Venus_Atmosphere"
+bpy.ops.object.shade_smooth()
+
+# ==== ATMOSPHERE MATERIAL ====
+mat_atmosphere = bpy.data.materials.new(name="VenusAtmosphereMaterial")
+mat_atmosphere.use_nodes = True
+nodes = mat_atmosphere.node_tree.nodes
+links = mat_atmosphere.node_tree.links
+nodes.clear()
+
+# Nodes for atmosphere
+tex_clouds = nodes.new(type='ShaderNodeTexImage')
+tex_clouds.image = bpy.data.images.load(atmosphere_texture_path)
+tex_clouds.image.alpha_mode = 'CHANNEL_PACKED'
+tex_clouds.extension = 'REPEAT'
+
+bsdf_atmo = nodes.new(type='ShaderNodeBsdfTransparent')
+mix_shader = nodes.new(type='ShaderNodeMixShader')
+principled = nodes.new(type='ShaderNodeBsdfPrincipled')
+principled.inputs['Roughness'].default_value = 1.0
+output = nodes.new(type='ShaderNodeOutputMaterial')
+
+# Alpha-based mix for clouds
+links.new(tex_clouds.outputs['Alpha'], mix_shader.inputs['Fac'])
+links.new(bsdf_atmo.outputs['BSDF'], mix_shader.inputs[1])
+links.new(principled.outputs['BSDF'], mix_shader.inputs[2])
+links.new(mix_shader.outputs['Shader'], output.inputs['Surface'])
+
+# Cloud texture → Base Color
+links.new(tex_clouds.outputs['Color'], principled.inputs['Base Color'])
+
+# Assign material
+venus_atmosphere.data.materials.append(mat_atmosphere)
+mat_atmosphere.blend_method = 'BLEND'
+mat_atmosphere.blend_method = 'BLEND'
+venus_atmosphere.visible_shadow = False  # Optional: disables casting shadow
+
+
+# ==== SUNLIGHT (MATCH MERCURY) ====
+bpy.ops.object.light_add(type='SUN', location=(5, -5, 5))
+sun = bpy.context.active_object
+sun.data.energy = 8
+sun.rotation_euler = (0.9, 0, 0.8)
+
+# ==== CAMERA (MATCH MERCURY) ====
+bpy.ops.object.camera_add(location=(0, -6, 0), rotation=(1.5708, 0, 0))
+camera = bpy.context.active_object
+camera.data.lens = 35
+bpy.context.scene.camera = camera
+
+# ==== RENDER SETTINGS ====
+bpy.context.scene.render.engine = 'CYCLES'
+bpy.context.scene.cycles.device = 'GPU'
+bpy.context.scene.render.film_transparent = False
+
+print("✅ Venus with surface and atmosphere created.")
+
+# ==== ANIMATION SETTINGS ====
+scene = bpy.context.scene
+scene.frame_start = 1
+scene.frame_end = 120  # 5 seconds at 24 fps
+scene.render.fps = 24
+
+# ---- VENUS SURFACE ROTATION ----
+venus_surface.rotation_euler[2] = 0
+venus_surface.keyframe_insert(data_path="rotation_euler", frame=1)
+
+venus_surface.rotation_euler[2] = 6.28319  # 360 degrees in radians
+venus_surface.keyframe_insert(data_path="rotation_euler", frame=120)
+
+# ---- ATMOSPHERE ROTATION (slightly faster for realism) ----
+venus_atmosphere.rotation_euler[2] = 0
+venus_atmosphere.keyframe_insert(data_path="rotation_euler", frame=1)
+
+venus_atmosphere.rotation_euler[2] = 7.5  # slightly faster spin
+venus_atmosphere.keyframe_insert(data_path="rotation_euler", frame=120)
+
+# ---- LINEAR INTERPOLATION (constant speed) ----
+for obj in [venus_surface, venus_atmosphere]:
+    action = obj.animation_data.action
+    for fcurve in action.fcurves:
+        for keyframe in fcurve.keyframe_points:
+            keyframe.interpolation = 'LINEAR'
+            
+# ==== OUTPUT SETTINGS (PNG SEQUENCE) ====
+scene.render.film_transparent = True
+
+# ==== RENDER OPTIMIZATION ====
+scene.render.use_persistent_data = True  # faster animation rendering
+
+# Cycles quality/performance balance
+scene.cycles.samples = 128
+scene.cycles.preview_samples = 32
+scene.cycles.use_adaptive_sampling = True
+
+# Denoising (important for animation)
+scene.cycles.use_denoising = True
+scene.cycles.denoiser = 'OPENIMAGEDENOISE'
+
+print("✅ PNG sequence + render optimization applied.")
